@@ -1,5 +1,6 @@
 import numpy as np
 from tqdm import tqdm
+import time
 
 def construir_video_segments(annotations_by_segment, fps=25):
     return {
@@ -18,19 +19,34 @@ def segment_signal(df, window_size, step_size, columns):
 def extract_features(segment):
     x, y, z = segment[:, 0], segment[:, 1], segment[:, 2]
     features = []
+
     for axis_data in [x, y, z]:
+        deriv1 = np.gradient(axis_data)
+        deriv2 = np.gradient(deriv1)
+
         features.extend([
             np.mean(axis_data),
             np.std(axis_data),
-            np.max(axis_data),
             np.min(axis_data),
-            np.sum(axis_data ** 2),
+            np.max(axis_data),
+            np.sum(axis_data ** 2),             # energy
+            axis_data[-1] - axis_data[0],       # dynamic change
+            np.mean(deriv1),                    # slope
+            np.mean(np.abs(deriv1)),            # abs(slope)
+            np.mean(deriv1),
+            np.std(deriv1),
+            np.mean(deriv2),
+            np.std(deriv2),
         ])
+
     sma = np.mean(np.abs(x) + np.abs(y) + np.abs(z))
     features.append(sma)
+
+    # Axis correlations (X-Y, X-Z, Y-Z)
     features.append(np.corrcoef(x, y)[0, 1])
     features.append(np.corrcoef(x, z)[0, 1])
     features.append(np.corrcoef(y, z)[0, 1])
+
     return features
 
 def construir_dataset(annotations_by_segment, df_dict, video_segments, FS, FPS, WINDOW_SIZE, STEP_SIZE, COLS):
@@ -60,7 +76,25 @@ def construir_dataset(annotations_by_segment, df_dict, video_segments, FS, FPS, 
             if len(segments) == 0:
                 continue
 
-            features = [extract_features(seg) for seg in segments]
+            if WINDOW_SIZE < 50:
+                segments_np = np.array(segments)  # shape: (n_windows, window_size, 3)
+
+                means = segments_np.mean(axis=1)  # (n_windows, 3)
+                stds = segments_np.std(axis=1)
+                maxs = segments_np.max(axis=1)
+                mins = segments_np.min(axis=1)
+                energy = np.sum(segments_np ** 2, axis=1)
+
+                # Correct SMA: average of sum of abs(X,Y,Z) per sample
+                sma = np.mean(np.sum(np.abs(segments_np), axis=2), axis=1).reshape(-1, 1)  # (n_windows, 1)
+
+                # Stack all features: shape (n_windows, total_features)
+                features = np.hstack([means, stds, maxs, mins, energy, sma])
+
+
+            else:
+                features = [extract_features(seg) for seg in segments]
+
             centers = starts + (WINDOW_SIZE / (2 * FS))
             label_vector = ann_df[col].values.astype(float)
             label_times = np.arange(len(label_vector)) / FPS
@@ -87,4 +121,5 @@ def construir_dataset(annotations_by_segment, df_dict, video_segments, FS, FPS, 
                 "n_risa": sum(labels)
             })
 
+    print("Salimos de construir dataset")
     return X_total, y_total, resumen_data

@@ -4,7 +4,7 @@ import numpy as np
 from collections import Counter
 import matplotlib.pyplot as plt
 
-with open("laughter_dataset.pkl", "rb") as f:
+with open("../../laughter_dataset.pkl", "rb") as f:
     X_total, y_total, resumen_data = pickle.load(f)
 
 

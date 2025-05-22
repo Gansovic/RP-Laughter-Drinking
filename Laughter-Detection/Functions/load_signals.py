@@ -18,7 +18,7 @@ def load_accelerometer_signals(sensor_base, cols):
     for pid in range(1, 51):
         try:
             path = os.path.join(sensor_base, f"{pid}.csv")
-            df = pd.read_csv(path, usecols=cols, encoding='latin1', on_bad_lines='skip')
+            df = pd.read_csv(path, usecols=cols, encoding='latin1', on_bad_lines='skip', engine="python")
             df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
             df.dropna(subset=cols, inplace=True)
             df['time'] = np.arange(len(df)) / 50

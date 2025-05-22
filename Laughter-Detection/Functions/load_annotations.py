@@ -7,17 +7,25 @@ from collections import defaultdict, Counter
 import numpy as np
 from tqdm import tqdm
 
-# Actualización de ruta en config.py (deberás reflejar esto ahí también)
-ANNOTATION_BASE = "/Volumes/staff-bulk/ewi/insy/SPCDataSets/conflab-mm/v4/release/annotations/actions/laughing"
 
-def load_annotation_metadata(base_path, source_types):
+def load_annotation_metadata(base_path, source_folders):
+    """
+    Carga metadatos de anotaciones desde subcarpetas como 'No_Audio', 'With_Audio', etc.
+
+    Args:
+        base_path (str): Ruta base a las anotaciones.
+        source_folders (list of str): Lista de subcarpetas a incluir, por ejemplo: ["No_Audio", "With_Audio"]
+
+    Returns:
+        list of dicts: Metadatos de archivos de anotaciones.
+    """
     annotation_files = []
-    for src_type in source_types:
-        folder = os.path.join(base_path, src_type)
+    for subfolder in source_folders:
+        folder = os.path.join(base_path, subfolder)
         files = sorted(glob(os.path.join(folder, '*.csv')))
         for f in files:
             annotation_files.append({
-                "source": src_type,
+                "subfolder": subfolder,  # Ej: No_Audio
                 "path": f,
                 "filename": os.path.basename(f),
                 "video_id": os.path.basename(f).split('_')[0],
@@ -36,14 +44,14 @@ def print_annotation_pid_stats(annotations_by_segment):
     #for pid, count in sorted(pids_totales.items(), key=lambda x: int(x[0][1:])):
     #    print(f"{pid}: {count} segmentos")
 
-def load_annotations_majority_vote(annotation_files, debug=False):
+def load_annotations(annotation_files, aggregation="majority", debug=False):
     grouped = defaultdict(list)
     for ann in annotation_files:
         key = (ann['video_id'], ann['segment'])
         grouped[key].append(ann['path'])
 
     annotations_by_segment = {}
-    print(f"\n🔄 Aggregating annotations from {len(grouped)} segments...\n")
+    print(f"\n🔄 Aggregating annotations from {len(grouped)} segments with aggregation='{aggregation}'...\n")
 
     for (video_id, segment), paths in tqdm(grouped.items(), desc="Segments", unit="seg"):
         if debug:
@@ -59,18 +67,21 @@ def load_annotations_majority_vote(annotation_files, debug=False):
                         print(f"⚠️ Skipping {path} due to unexpected column count: {n_cols}")
                         continue
                 df = pd.read_csv(path, encoding='latin1', on_bad_lines='skip', dtype=str, low_memory=False)
+                if df.empty or df.shape[1] < 10:
+                    print(f"⚠️ Archivo inválido o vacío: {path}")
+                    continue
                 dfs.append(df)
             except Exception as e:
                 print(f"⚠️ Error reading {path}: {e}")
                 continue
 
-        if len(dfs) < 2:
+        if len(dfs) < 1:
             continue
 
+        # Determinar columnas comunes
         common_cols = set(dfs[0].columns)
         for df in dfs[1:]:
             common_cols &= set(df.columns)
-
         if not common_cols:
             continue
 
@@ -82,10 +93,16 @@ def load_annotations_majority_vote(annotation_files, debug=False):
                 for df in dfs
             ]
             stacked = np.stack([df.values for df in dfs], axis=0)
-            majority = (np.sum(stacked, axis=0) >= (len(dfs) // 2 + 1)).astype(int)
+
+            if aggregation == "majority":
+                combined = (np.sum(stacked, axis=0) >= (len(dfs) // 2 + 1)).astype(int)
+            elif aggregation == "union":
+                combined = (np.sum(stacked, axis=0) >= 1).astype(int)
+            else:
+                raise ValueError("Invalid aggregation method. Use 'majority' or 'union'.")
 
             annotations_by_segment[(video_id, segment)] = pd.DataFrame(
-                majority, columns=[f'p{col}' for col in common_cols]
+                combined, columns=[f'p{col}' for col in common_cols]
             )
         except Exception as e:
             print(f"⚠️ Error processing segment {video_id}_{segment}: {e}")
@@ -93,3 +110,4 @@ def load_annotations_majority_vote(annotation_files, debug=False):
 
     print_annotation_pid_stats(annotations_by_segment)
     return annotations_by_segment
+
